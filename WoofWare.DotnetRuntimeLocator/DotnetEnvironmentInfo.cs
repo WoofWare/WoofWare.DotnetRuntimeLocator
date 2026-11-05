@@ -107,8 +107,27 @@ public record DotnetEnvironmentInfo(
         return encoding.GetBytes(path + "\0");
     }
 
-    private static unsafe DotnetEnvironmentInfo CallDelegate(string? dotnetExePath, RuntimeDelegate f)
+    /// <summary>
+    ///     Calls <paramref name="getDotnetEnvironmentInfo" />, a pointer to hostfxr's
+    ///     <c>hostfxr_get_dotnet_environment_info</c> or a function of its signature, and returns what it reported.
+    /// </summary>
+    /// <remarks>
+    ///     The function's implementation is
+    ///     https://github.com/dotnet/runtime/blob/2dba5a3587de19160fb09129dcd3d7a4089b67b5/src/native/corehost/fxr/hostfxr.cpp#L357
+    ///     It takes:
+    ///     * The path to the directory which contains the `dotnet` executable, as `EncodeForHostFxr` encodes it
+    ///     * A structure which is reserved for future use and which must currently be null
+    ///     * A pointer to a callback which takes two arguments: a DotnetEnvironmentInfoNative
+    ///     (https://github.com/dotnet/runtime/blob/2dba5a3587de19160fb09129dcd3d7a4089b67b5/src/native/corehost/hostfxr.h#L311)
+    ///     and a context object you supplied.
+    ///     This callback is represented by the type `StoreResultDelegate`.
+    ///     * A pointer to the context object you want to consume in the callback.
+    ///     It returns zero on success. hostfxr.h declares it, and the callback, <c>HOSTFXR_CALLTYPE</c>, which is
+    ///     <c>__cdecl</c>.
+    /// </remarks>
+    internal static unsafe DotnetEnvironmentInfo CallDelegate(string? dotnetExePath, IntPtr getDotnetEnvironmentInfo)
     {
+        var f = (delegate* unmanaged[Cdecl]<IntPtr, IntPtr, IntPtr, IntPtr, int>)getDotnetEnvironmentInfo;
         byte[]? dotnet = null;
         if (dotnetExePath != null)
         {
@@ -123,7 +142,7 @@ public record DotnetEnvironmentInfo(
                 var del = (StoreResultDelegate)StoreResult;
                 var callback = Marshal.GetFunctionPointerForDelegate(del);
 
-                var rc = f.Invoke((IntPtr)dotnetPath, IntPtr.Zero, callback, GCHandle.ToIntPtr(handle));
+                var rc = f((IntPtr)dotnetPath, IntPtr.Zero, callback, GCHandle.ToIntPtr(handle));
                 if (rc != 0) throw new Exception($"Could not obtain .NET environment information (exit code: {rc})");
 
                 if (ReferenceEquals(null, handle.Target))
@@ -156,7 +175,6 @@ public record DotnetEnvironmentInfo(
             var ptr = NativeLibrary.GetExport(lib, "hostfxr_get_dotnet_environment_info");
             if (ptr == IntPtr.Zero) throw new Exception("Unable to load function from native library");
 
-            var f = Marshal.GetDelegateForFunctionPointer<RuntimeDelegate>(ptr);
             string? dotnetParent = null;
             if (dotnetExe != null)
             {
@@ -168,7 +186,7 @@ public record DotnetEnvironmentInfo(
                 }
             }
 
-            return CallDelegate(dotnetParent, f);
+            return CallDelegate(dotnetParent, ptr);
         }
         finally
         {
@@ -223,28 +241,11 @@ public record DotnetEnvironmentInfo(
     }
 
     /// <summary>
-    ///     The signature of hostfxr_get_dotnet_environment_info.
-    ///     Its implementation is
-    ///     https://github.com/dotnet/runtime/blob/2dba5a3587de19160fb09129dcd3d7a4089b67b5/src/native/corehost/fxr/hostfxr.cpp#L357
-    ///     Takes:
-    ///     * The path to the directory which contains the `dotnet` executable, as `EncodeForHostFxr` encodes it
-    ///     * A structure which is reserved for future use and which must currently be null
-    ///     * A pointer to a callback which takes two arguments: a DotnetEnvironmentInfoNative
-    ///     (https://github.com/dotnet/runtime/blob/2dba5a3587de19160fb09129dcd3d7a4089b67b5/src/native/corehost/hostfxr.h#L311)
-    ///     and a context object you supplied.
-    ///     This callback is represented by the type `StoreResultDelegate`.
-    ///     * A pointer to the context object you want to consume in the callback.
-    ///     Returns zero on success.
-    /// </summary>
-    private delegate int RuntimeDelegate(IntPtr pathToDotnetExeDirectory, IntPtr mustBeNull, IntPtr outputCallback,
-        IntPtr outputArg);
-
-    /// <summary>
-    ///     The callback which you pass to RuntimeDelegate.
+    ///     The callback which you pass to hostfxr_get_dotnet_environment_info.
     ///     Takes:
     ///     * a DotnetEnvironmentInfoNative
     ///     (https://github.com/dotnet/runtime/blob/2dba5a3587de19160fb09129dcd3d7a4089b67b5/src/native/corehost/hostfxr.h#L311)
-    ///     * a context object, which is up to you to define and to pass into the RuntimeDelegate.
+    ///     * a context object, which is up to you to define and to pass into hostfxr_get_dotnet_environment_info.
     /// </summary>
     private delegate void StoreResultDelegate(IntPtr envInfo, IntPtr retLoc);
 }

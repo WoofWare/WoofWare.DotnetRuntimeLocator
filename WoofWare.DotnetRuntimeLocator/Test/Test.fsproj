@@ -15,6 +15,7 @@
     <Compile Include="TestRuntimeConfigParse.fs"/>
     <Compile Include="TestSurface.fs"/>
     <Compile Include="TestDotnetEnvironmentInfo.fs"/>
+    <Compile Include="TestHostFxrCallback.fs"/>
     <EmbeddedResource Include="runtimeconfig1.json" />
     <EmbeddedResource Include="runtimeconfig2.json" />
     <EmbeddedResource Include="host-escape-sweep.json" />
