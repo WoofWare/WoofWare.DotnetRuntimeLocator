@@ -83,12 +83,36 @@ public record DotnetEnvironmentInfo(
         handle.Target = toRet;
     }
 
+    /// <summary>
+    ///     <paramref name="path" /> as the string hostfxr takes it: a NUL-terminated <c>pal::char_t</c> string,
+    ///     which is UTF-16 on Windows and UTF-8 elsewhere.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="path" /> contains NUL.</exception>
+    /// <exception cref="EncoderFallbackException">
+    ///     <paramref name="path" /> contains a lone surrogate, which has no encoding.
+    /// </exception>
+    internal static byte[] EncodeForHostFxr(string path)
+    {
+        // hostfxr would read only up to the first NUL, and so look somewhere other than the caller named.
+        if (path.Contains('\0'))
+            throw new ArgumentException($"A path passed to hostfxr cannot contain NUL; provided: {path}");
+
+        // Strict encoders: a lossy one would also send hostfxr to some other path.
+        Encoding encoding = OperatingSystem.IsWindows()
+            ? new UnicodeEncoding(bigEndian: false, byteOrderMark: false, throwOnInvalidBytes: true)
+            : new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+        // hostfxr reads the string up to its terminator, so without one it reads past the array into
+        // whatever the GC heap holds next.
+        return encoding.GetBytes(path + "\0");
+    }
+
     private static unsafe DotnetEnvironmentInfo CallDelegate(string? dotnetExePath, RuntimeDelegate f)
     {
         byte[]? dotnet = null;
         if (dotnetExePath != null)
         {
-            dotnet = Encoding.ASCII.GetBytes(dotnetExePath);
+            dotnet = EncodeForHostFxr(dotnetExePath);
         }
         fixed (byte* dotnetPath = dotnet)
         {
@@ -203,7 +227,7 @@ public record DotnetEnvironmentInfo(
     ///     Its implementation is
     ///     https://github.com/dotnet/runtime/blob/2dba5a3587de19160fb09129dcd3d7a4089b67b5/src/native/corehost/fxr/hostfxr.cpp#L357
     ///     Takes:
-    ///     * The ASCII-encoded path to the directory which contains the `dotnet` executable
+    ///     * The path to the directory which contains the `dotnet` executable, as `EncodeForHostFxr` encodes it
     ///     * A structure which is reserved for future use and which must currently be null
     ///     * A pointer to a callback which takes two arguments: a DotnetEnvironmentInfoNative
     ///     (https://github.com/dotnet/runtime/blob/2dba5a3587de19160fb09129dcd3d7a4089b67b5/src/native/corehost/hostfxr.h#L311)
